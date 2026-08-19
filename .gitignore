@@ -1,0 +1,19 @@
+## Salida de compilación .NET
+[Bb]in/
+[Oo]bj/
+
+## Publicaciones manuales del ejecutable
+publish/
+publish_bin/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Logs de build sueltos
+build_log.txt
+build_output.txt
+*.log
