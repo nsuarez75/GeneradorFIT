@@ -7,6 +7,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>GeneradorFIT</AssemblyName>
     <RootNamespace>GeneradorFIT</RootNamespace>
+    <ApplicationIcon>Resources\Images\alomatek.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
