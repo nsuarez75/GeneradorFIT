@@ -6,8 +6,8 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <!-- Material Design -->
-                <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="Blue" SecondaryColor="Orange" />
+                <!-- Material Design: paleta corporativa (azul marino #01426A / azul #597CBE) -->
+                <materialDesign:CustomColorTheme BaseTheme="Light" PrimaryColor="#01426A" SecondaryColor="#597CBE" />
                 <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesignTheme.Defaults.xaml" />
 
                 <!-- Custom Styles -->
