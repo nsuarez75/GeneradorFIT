@@ -113,8 +113,8 @@
                            Height="48"
                            FontSize="15"
                            IsEnabled="{Binding IsProcessing, Converter={StaticResource InverseBooleanConverter}}"
-                           Background="#4CAF50"
-                           BorderBrush="#4CAF50">
+                           Background="{StaticResource PrimaryBrush}"
+                           BorderBrush="{StaticResource PrimaryBrush}">
                         <StackPanel Orientation="Horizontal">
                             <materialDesign:PackIcon Kind="FileExcel"
                                                    Width="24"
