@@ -1,7 +1,7 @@
 ## Proposito
 
 Partiendo de una plantilla estándar donde se definen las features de una pieza, se genera el código de PLC para el estándar SICAR@GST de configuración de tecnologías
-de trazabilidad, así como la base del documento excel donde se muestran todas esas features para la plataforma I4 de GEESTAMP.
+de trazabilidad, así como la base del documento excel donde se muestran todas esas features para la plataforma I4 de GESTAMP.
 
 ## Instrucciones
 
