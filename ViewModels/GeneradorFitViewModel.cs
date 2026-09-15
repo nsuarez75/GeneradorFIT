@@ -1,4 +1,4 @@
-using ClosedXML.Excel;
+﻿using ClosedXML.Excel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -135,13 +135,17 @@ namespace GeneradorFIT.ViewModels
                                 throw new Exception("No se encontraron datos válidos en ninguna de las hojas PLC-RefX.");
                             }
 
+                            // Una vez comprobadas todas las referencias, miramos si además existe
+                            // la hoja opcional "PLC-Aux" para incorporar sus datos.
+                            var datosAux = GenerarDatosAux(libroEntrada);
+
                             SetEstado("Generando libro de salida...");
                             using (var libroSalida = new XLWorkbook())
                             {
                                 SetEstado("Hoja FIT...");
-                                GenerarHojaFIT(libroSalida, datos);
+                                GenerarHojaFIT(libroSalida, datos, datosAux);
 
-                                GenerarCodigoPLC(libroSalida, Referencias, datos);
+                                GenerarCodigoPLC(libroSalida, Referencias, datos, datosAux);
 
                                 SetEstado("Guardando archivo...");
                                 libroSalida.SaveAs(RutaDestino);
@@ -280,6 +284,46 @@ namespace GeneradorFIT.ViewModels
             return datos;
         }
 
+        // Hoja opcional "PLC-Aux": Asset en A, Working en B, Fid en C, desde la fila 2,
+        // usando la misma lógica de LastCellUsed que las hojas PLC-RefX para saber cuántas
+        // filas hay. Aquí no existe un LayoutName real distinto del Asset: se deja vacío
+        // a propósito (la hoja FIT reflejará Asset relleno y LayoutName en blanco).
+        private List<FitData> GenerarDatosAux(XLWorkbook libroEntrada)
+        {
+            var aux = new List<FitData>();
+
+            if (!libroEntrada.Worksheets.TryGetWorksheet("PLC-Aux", out var hoja))
+                return aux;
+
+            SetEstado("Leyendo PLC-Aux...");
+
+            int ultimaFila = 0;
+            var lastCell = hoja.LastCellUsed();
+            if (lastCell != null)
+            {
+                ultimaFila = lastCell.Address.RowNumber;
+            }
+
+            for (int fila = 2; fila <= ultimaFila; fila++)
+            {
+                string assetVal = GetVal(hoja, fila, 1);   // A
+                string workingVal = GetVal(hoja, fila, 2); // B
+                string fidVal = GetVal(hoja, fila, 3);     // C
+
+                if (!string.IsNullOrWhiteSpace(assetVal))
+                {
+                    aux.Add(new FitData
+                    {
+                        Asset = assetVal,
+                        Working = workingVal,
+                        Fid = fidVal
+                    });
+                }
+            }
+
+            return aux;
+        }
+
         private string GetVal(IXLWorksheet hoja, int row, int col)
         {
             try
@@ -302,7 +346,7 @@ namespace GeneradorFIT.ViewModels
             }
         }
 
-        private List<FitData> GenerarFidsLayoutName(List<FitData> datos, int numAsset)
+        private List<FitData> GenerarFidsLayoutName(List<FitData> datos, int numAsset, List<FitData> datosAux = null)
         {
             var fids = new List<FitData>();
             var fidsUnicos = new HashSet<string>();
@@ -318,33 +362,96 @@ namespace GeneradorFIT.ViewModels
                         Fid = dato.Fid,
                         LayoutName = dato.LayoutName,
                         Working = dato.Working,
-                        RefClient = dato.RefClient
+                        RefClient = dato.RefClient,
+                        Asset = dato.Asset
                     });
                 }
             }
+
+            // Datos de la hoja opcional "PLC-Aux": se añaden al final de la lista, pero
+            // solo si este conjunto ya tiene datos reales de PLC-RefX; si un conjunto no
+            // se usa en este archivo (fids vacío), no se le añade nada de PLC-Aux, para
+            // no crear "columnas nuevas" donde antes no había ningún dato real. Al no
+            // existir un LayoutName distinto del Asset en "PLC-Aux", usamos el propio
+            // Asset como LayoutName para que el código AWL (que carga LayoutName en el
+            // campo .Asset del DB) siga funcionando sin cambios.
+            if (datosAux != null && fids.Count > 0)
+            {
+                foreach (var dato in datosAux)
+                {
+                    if (fidsUnicos.Add(dato.Fid ?? ""))
+                    {
+                        fids.Add(new FitData
+                        {
+                            Fid = dato.Fid,
+                            LayoutName = dato.Asset,
+                            Working = dato.Working,
+                            Asset = dato.Asset
+                        });
+                    }
+                }
+            }
+
             return fids;
         }
 
-        private void RellenarFIDsLayoutName(List<FitData> fids, IXLWorksheet hoja, string columna)
+        private void RellenarFIDsLayoutName(List<FitData> fids, IXLWorksheet hoja, string columnaValores, string columnaCodigo, int numAsset)
         {
+            // Tamaño de array necesario en TableInfo_Lx para que quepan todos los elementos
+            // de este conjunto (incluidos los añadidos desde "PLC-Aux"). Si el conjunto no
+            // existe en este archivo (sin FIDs), no se indica nada.
+            if (fids.Count > 0)
+            {
+                hoja.Cell($"{columnaValores}1").Value = "Tamaño array necesario";
+                hoja.Cell($"{columnaValores}2").Value = fids.Count;
+            }
+
             int puntero = 4;
+            int punteroCodigo = 4;
+            int indiceArray = 1;
+
             foreach (var fid in fids)
             {
                 // Comilla inicial doble: al copiar/pegar en Excel, la primera comilla se
                 // interpreta como marcador de texto y desaparece, así que hace falta una
                 // segunda para que quede una comilla visible en el resultado pegado.
-                hoja.Cell($"{columna}{puntero}").Value = $"''{fid.LayoutName}'";
+                hoja.Cell($"{columnaValores}{puntero}").Value = $"''{fid.LayoutName}'";
                 puntero++;
-                hoja.Cell($"{columna}{puntero}").Value = $"''{fid.Working}'";
+                hoja.Cell($"{columnaValores}{puntero}").Value = $"''{fid.Working}'";
                 puntero++;
-                hoja.Cell($"{columna}{puntero}").Value = fid.Fid;
+                hoja.Cell($"{columnaValores}{puntero}").Value = fid.Fid;
                 puntero++;
-                hoja.Cell($"{columna}{puntero}").Value = Blank.Value;
+                hoja.Cell($"{columnaValores}{puntero}").Value = Blank.Value;
                 puntero++;
+
+                // Columna de código AWL: una posición del array TableInfo_Lx por cada
+                // conjunto (X = número de asset / conjunto de LayoutName), empezando en 1.
+                string destino = $"\"User_TableInfo_DB\".TableInfo_L{numAsset}[{indiceArray}]";
+
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"//{fid.Asset} - {fid.Fid}";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L {fid.Fid}";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.FeatureID";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L '{fid.Working}'";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.Working";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L '{fid.LayoutName}'";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.Asset";
+                punteroCodigo++;
+                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = Blank.Value;
+                punteroCodigo++;
+
+                indiceArray++;
             }
+
+            hoja.Column(columnaCodigo).Width = 45;
         }
 
-        private void GenerarHojaFIT(XLWorkbook libroSalida, List<FitData> datos)
+        private void GenerarHojaFIT(XLWorkbook libroSalida, List<FitData> datos, List<FitData> datosAux)
         {
             var hoja = libroSalida.Worksheets.Add("FIT");
 
@@ -379,19 +486,45 @@ namespace GeneradorFIT.ViewModels
                 fila++;
             }
 
+            // Filas adicionales con los datos de la hoja opcional "PLC-Aux": la columna
+            // Asset (E) se deja sin rellenar, igual que en las filas normales, y es la
+            // columna LayoutName (F) la que se rellena con el Asset de "PLC-Aux". Plant y
+            // Line se reutilizan de las filas normales (PLC-RefX), ya que "PLC-Aux" no
+            // trae esas columnas y se asume una única planta/línea por archivo.
+            // PartReference, Location y CriticalFeature son fijos para estas filas; el
+            // resto de columnas no existen en "PLC-Aux" y quedan en blanco.
+            string plantAux = datos.Count > 0 ? datos[0].Plant : "";
+            string lineAux = datos.Count > 0 ? datos[0].Line : "";
+
+            foreach (var dato in datosAux)
+            {
+                hoja.Cell(fila, 1).Value = plantAux;
+                hoja.Cell(fila, 2).Value = lineAux;
+                hoja.Cell(fila, 4).Value = "99";
+                hoja.Cell(fila, 6).Value = dato.Asset;
+                hoja.Cell(fila, 7).Value = dato.Working;
+                hoja.Cell(fila, 10).Value = "1";
+                hoja.Cell(fila, 11).Value = dato.Fid;
+                hoja.Cell(fila, 12).Value = "False";
+                fila++;
+            }
+
             var rango = hoja.Range(1, 1, fila - 1, cabeceras.Length);
             rango.CreateTable("FIT");
         }
 
-        private void GenerarCodigoPLC(XLWorkbook libroSalida, int referencias, List<FitData> datos)
+        private void GenerarCodigoPLC(XLWorkbook libroSalida, int referencias, List<FitData> datos, List<FitData> datosAux)
         {
             SetEstado("Tablas de datos...");
             var hojaData = libroSalida.Worksheets.Add("User Data Table Info");
 
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 1), hojaData, "B");
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 2), hojaData, "C");
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 3), hojaData, "D");
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 4), hojaData, "E");
+            // Por cada conjunto de LayoutName: una columna de valores y, a continuación,
+            // otra con el código AWL que carga esos valores en "User_TableInfo_DB".
+            // Los datos de "PLC-Aux" (si la hoja existe) se añaden al final de cada lista.
+            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 1, datosAux), hojaData, "B", "C", 1);
+            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 2, datosAux), hojaData, "D", "E", 2);
+            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 3, datosAux), hojaData, "F", "G", 3);
+            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 4, datosAux), hojaData, "H", "I", 4);
 
             SetEstado("Configuración PLC...");
             var hojaConfig = libroSalida.Worksheets.Add("Config Reference");
