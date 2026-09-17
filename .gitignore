@@ -17,3 +17,6 @@ publish_bin/
 build_log.txt
 build_output.txt
 *.log
+
+## DB de ejemplo/salida generada por la app (User_TableInfo_DB.db)
+User_TableInfo_DB.db
