@@ -18,5 +18,9 @@ build_log.txt
 build_output.txt
 *.log
 
-## DB de ejemplo/salida generada por la app (User_TableInfo_DB.db)
+## Archivos de ejemplo/salida generados por la app o usados solo como referencia
 User_TableInfo_DB.db
+References_DB.db
+/User_Config_Reference_FB.xml
+/User_Config_Reference_FB.awl
+/FB_Ejemplo.awl

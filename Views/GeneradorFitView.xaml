@@ -53,10 +53,10 @@
             <!-- Destination File Card -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
-                    <TextBlock Text="Excel Destino (Guardar como)"
+                    <TextBlock Text="Destino (Excel y carpeta de salida)"
                               Style="{StaticResource SubtitleTextStyle}"/>
 
-                    <TextBlock Text="RUTA DEL ARCHIVO DESTINO"
+                    <TextBlock Text="RUTA DEL ARCHIVO EXCEL / CARPETA DE SALIDA"
                               Style="{StaticResource LabelTextStyle}"/>
 
                     <Grid>
@@ -107,6 +107,21 @@
             <!-- Action Card -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel>
+                    <TextBlock Text="¿Qué generar?"
+                              Style="{StaticResource SubtitleTextStyle}"/>
+
+                    <CheckBox Content="Excel FIT (solo hoja FIT)"
+                             IsChecked="{Binding GenerarExcelFit}"
+                             Margin="0,4,0,4"/>
+
+                    <CheckBox Content="DB User_TableInfo_DB"
+                             IsChecked="{Binding GenerarDbTableInfo}"
+                             Margin="0,4,0,4"/>
+
+                    <CheckBox Content="FB User_Config_Reference_FB"
+                             IsChecked="{Binding GenerarFbConfigReference}"
+                             Margin="0,4,0,16"/>
+
                     <Button Command="{Binding GenerarCommand}"
                            Style="{StaticResource MaterialDesignRaisedButton}"
                            materialDesign:ButtonAssist.CornerRadius="4"
@@ -116,12 +131,12 @@
                            Background="{StaticResource PrimaryBrush}"
                            BorderBrush="{StaticResource PrimaryBrush}">
                         <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Kind="FileExcel"
+                            <materialDesign:PackIcon Kind="Cog"
                                                    Width="24"
                                                    Height="24"
                                                    VerticalAlignment="Center"
                                                    Margin="0,0,12,0"/>
-                            <TextBlock Text="Generar Excel"
+                            <TextBlock Text="Generar"
                                       VerticalAlignment="Center"
                                       FontWeight="Medium"/>
                         </StackPanel>

@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
@@ -43,6 +44,15 @@ namespace GeneradorFIT.ViewModels
 
         [ObservableProperty]
         private int _referencias = 8;
+
+        [ObservableProperty]
+        private bool _generarExcelFit = true;
+
+        [ObservableProperty]
+        private bool _generarDbTableInfo = true;
+
+        [ObservableProperty]
+        private bool _generarFbConfigReference = true;
 
         [ObservableProperty]
         private string _estado = "Listo";
@@ -103,7 +113,7 @@ namespace GeneradorFIT.ViewModels
 
             if (string.IsNullOrWhiteSpace(RutaDestino))
             {
-                MessageBox.Show("Por favor, selecciona una ruta de destino para guardar el archivo Excel.",
+                MessageBox.Show("Por favor, selecciona una ruta de destino para guardar los archivos generados.",
                     "Atención", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -112,6 +122,13 @@ namespace GeneradorFIT.ViewModels
             {
                 MessageBox.Show("El número de referencias debe ser mayor que 0.",
                     "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (!GenerarExcelFit && !GenerarDbTableInfo && !GenerarFbConfigReference)
+            {
+                MessageBox.Show("Selecciona al menos una de las opciones de generación.",
+                    "Atención", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -140,26 +157,43 @@ namespace GeneradorFIT.ViewModels
                             // la hoja opcional "PLC-Aux" para incorporar sus datos.
                             var datosAux = GenerarDatosAux(libroEntrada);
 
-                            SetEstado("Generando libro de salida...");
-                            using (var libroSalida = new XLWorkbook())
+                            string carpetaDestino = Path.GetDirectoryName(RutaDestino);
+                            var generados = new List<string>();
+
+                            if (GenerarExcelFit)
                             {
-                                SetEstado("Hoja FIT...");
-                                GenerarHojaFIT(libroSalida, datos, datosAux);
+                                SetEstado("Generando Excel FIT...");
+                                using (var libroSalida = new XLWorkbook())
+                                {
+                                    GenerarHojaFIT(libroSalida, datos, datosAux);
 
-                                GenerarHojaConfigReference(libroSalida, Referencias, datos);
-
-                                SetEstado("Guardando archivo...");
-                                libroSalida.SaveAs(RutaDestino);
+                                    SetEstado("Guardando Excel...");
+                                    libroSalida.SaveAs(RutaDestino);
+                                }
+                                generados.Add(RutaDestino);
                             }
 
-                            SetEstado("Generando DB User_TableInfo_DB...");
-                            string rutaDB = Path.Combine(Path.GetDirectoryName(RutaDestino), "User_TableInfo_DB.db");
-                            string contenidoDB = GenerarContenidoDBTableInfo(datos, datosAux);
-                            File.WriteAllText(rutaDB, contenidoDB, new UTF8Encoding(true));
+                            if (GenerarDbTableInfo)
+                            {
+                                SetEstado("Generando DB User_TableInfo_DB...");
+                                string rutaDB = Path.Combine(carpetaDestino, "User_TableInfo_DB.db");
+                                string contenidoDB = GenerarContenidoDBTableInfo(datos, datosAux);
+                                File.WriteAllText(rutaDB, contenidoDB, new UTF8Encoding(true));
+                                generados.Add(rutaDB);
+                            }
+
+                            if (GenerarFbConfigReference)
+                            {
+                                SetEstado("Generando FB User_Config_Reference_FB...");
+                                string rutaFB = Path.Combine(carpetaDestino, "User_Config_Reference_FB.awl");
+                                string contenidoFB = GenerarAwlFBConfigReference(datos, Referencias);
+                                File.WriteAllText(rutaFB, contenidoFB, new UTF8Encoding(true));
+                                generados.Add(rutaFB);
+                            }
 
                             Application.Current.Dispatcher.Invoke(() =>
                             {
-                                MessageBox.Show($"¡Éxito! Archivo generado en:\n{RutaDestino}\n\nDB generado en:\n{rutaDB}",
+                                MessageBox.Show($"¡Éxito! Archivos generados:\n\n{string.Join("\n", generados)}",
                                     "Generación Completada", MessageBoxButton.OK, MessageBoxImage.Information);
                             });
                         }
@@ -516,39 +550,78 @@ namespace GeneradorFIT.ViewModels
             rango.CreateTable("FIT");
         }
 
-        private void GenerarHojaConfigReference(XLWorkbook libroSalida, int referencias, List<FitData> datos)
+        // Espacio de nombres de las redes STL dentro del FB (Openness SW/NetworkSource/StatementList).
+        // Cabecera fija del FB "User_Config_Reference_FB" en formato fuente AWL: nombre del
+        // bloque e interfaz completa (Ref_1..Ref_32 con sus arrays Tech0X, más el resto de
+        // variables estáticas del proyecto), siempre igual según nos indicó el usuario. Termina
+        // justo en "END_VAR"; el BEGIN con las redes de referencia se añade en tiempo de generación.
+        private string CargarCabeceraFBConfigReference()
         {
-            SetEstado("Configuración PLC...");
-            var hojaConfig = libroSalida.Worksheets.Add("Config Reference");
+            var asm = Assembly.GetExecutingAssembly();
+            using var stream = asm.GetManifestResourceStream("GeneradorFIT.Resources.Templates.User_Config_Reference_FB.header.awl");
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
 
-            int filaTitulo = 4;
+        // Genera, para un conjunto de filas de una misma referencia, la red STL (NETWORK) con el
+        // mismo contenido que antes se escribía como código AWL en la hoja "Config Reference":
+        //   //{LayoutName} {RefClient}
+        //   L {Fid}
+        //   T #Ref_{Ref}.Tech0{Tech}[{Pointer}].Name
+        private static string CrearRedReferenciaAwl(List<FitData> filas, int numeroRef)
+        {
+            var sb = new StringBuilder();
+            sb.Append("NETWORK\r\n");
+            sb.Append($"TITLE = Referencia {numeroRef:00}\r\n");
+            // Línea en blanco obligatoria: en formato fuente AWL, todo lo que va entre TITLE y la
+            // primera línea en blanco se interpreta como el comentario del segmento, no como código.
+            // Sin este separador, el primer "//comentario" de la lista se fundía con el título.
+            sb.Append("\r\n");
 
+            foreach (var fila in filas)
+            {
+                sb.Append($"      //{fila.LayoutName} {fila.RefClient}\r\n");
+                sb.Append($"      L     {fila.Fid};\r\n");
+                sb.Append($"      T     #Ref_{numeroRef}.Tech0{fila.Tech}[{fila.Pointer}].Name;\r\n");
+                sb.Append("\r\n");
+            }
+
+            return sb.ToString();
+        }
+
+        // Genera el FB "User_Config_Reference_FB" completo en formato fuente AWL: mantiene
+        // siempre el mismo nombre e interfaz (definidos en la cabecera embebida) y añade una
+        // red/segmento por cada referencia que tenga datos configurados en el Excel de origen
+        // (conjunto NumAsset == 1).
+        private string GenerarAwlFBConfigReference(List<FitData> datos, int referencias)
+        {
+            var sb = new StringBuilder();
+            sb.Append(CargarCabeceraFBConfigReference());
+            sb.Append("\r\n\r\nBEGIN\r\n");
+
+            bool hayRedes = false;
             for (int refNum = 0; refNum < referencias; refNum++)
             {
-                int colActual = 1 + refNum;
-                hojaConfig.Cell(filaTitulo, colActual).Value = $"Referencia {refNum + 1}";
+                int numeroRef = refNum + 1;
+                var filas = datos.Where(d => d.NumAsset == 1 && d.Ref == numeroRef).ToList();
+                if (filas.Count == 0)
+                    continue;
 
-                int filaCodigoActual = 5;
-
-                foreach (var dato in datos)
-                {
-                    if (dato.NumAsset == 1 && dato.Ref == refNum + 1)
-                    {
-                        hojaConfig.Cell(filaCodigoActual, colActual).Value = $"//{dato.LayoutName} {dato.RefClient}";
-                        filaCodigoActual++;
-
-                        hojaConfig.Cell(filaCodigoActual, colActual).Value = $"L {dato.Fid}";
-                        filaCodigoActual++;
-
-                        hojaConfig.Cell(filaCodigoActual, colActual).Value = $"T #Ref_{dato.Ref}.Tech0{dato.Tech}[{dato.Pointer}].Name";
-                        filaCodigoActual++;
-
-                        hojaConfig.Cell(filaCodigoActual, colActual).Value = "";
-                        filaCodigoActual++;
-                    }
-                }
-                hojaConfig.Column(colActual).Width = 45;
+                sb.Append(CrearRedReferenciaAwl(filas, numeroRef));
+                hayRedes = true;
             }
+
+            // Si ninguna referencia tiene datos, dejamos igualmente una red vacía, tal como
+            // hace TIA Portal por defecto en un FB recién creado sin lógica.
+            if (!hayRedes)
+            {
+                sb.Append("NETWORK\r\n");
+                sb.Append("TITLE = \r\n");
+            }
+
+            sb.Append("END_FUNCTION_BLOCK\r\n");
+
+            return sb.ToString();
         }
     }
 }
