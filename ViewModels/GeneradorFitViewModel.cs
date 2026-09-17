@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -145,19 +146,24 @@ namespace GeneradorFIT.ViewModels
                                 SetEstado("Hoja FIT...");
                                 GenerarHojaFIT(libroSalida, datos, datosAux);
 
-                                GenerarCodigoPLC(libroSalida, Referencias, datos, datosAux);
+                                GenerarHojaConfigReference(libroSalida, Referencias, datos);
 
                                 SetEstado("Guardando archivo...");
                                 libroSalida.SaveAs(RutaDestino);
                             }
+
+                            SetEstado("Generando DB User_TableInfo_DB...");
+                            string rutaDB = Path.Combine(Path.GetDirectoryName(RutaDestino), "User_TableInfo_DB.db");
+                            string contenidoDB = GenerarContenidoDBTableInfo(datos, datosAux);
+                            File.WriteAllText(rutaDB, contenidoDB, new UTF8Encoding(true));
+
+                            Application.Current.Dispatcher.Invoke(() =>
+                            {
+                                MessageBox.Show($"¡Éxito! Archivo generado en:\n{RutaDestino}\n\nDB generado en:\n{rutaDB}",
+                                    "Generación Completada", MessageBoxButton.OK, MessageBoxImage.Information);
+                            });
                         }
                     }
-
-                    Application.Current.Dispatcher.Invoke(() =>
-                    {
-                        MessageBox.Show($"¡Éxito! Archivo generado en:\n{RutaDestino}",
-                            "Generación Completada", MessageBoxButton.OK, MessageBoxImage.Information);
-                    });
                 }
                 catch (Exception ex)
                 {
@@ -395,60 +401,57 @@ namespace GeneradorFIT.ViewModels
             return fids;
         }
 
-        private void RellenarFIDsLayoutName(List<FitData> fids, IXLWorksheet hoja, string columnaValores, string columnaCodigo, int numAsset)
+        // Genera el texto fuente del DB "User_TableInfo_DB" (formato de exportación de
+        // fuente externa de TIA Portal), con el mismo contenido que antes se volcaba en
+        // la hoja "User Data Table Info": un array TableInfo_X por cada conjunto de
+        // LayoutName (X = número de asset, sin la "L" que llevaba el código AWL anterior,
+        // ya que las variables reales del DB son TableInfo_1, TableInfo_2, etc.).
+        // Si un conjunto no tiene ningún FID configurado en el Excel de origen, no se
+        // declara ni se rellena en el DB.
+        private string GenerarContenidoDBTableInfo(List<FitData> datos, List<FitData> datosAux)
         {
-            // Tamaño de array necesario en TableInfo_Lx para que quepan todos los elementos
-            // de este conjunto (incluidos los añadidos desde "PLC-Aux"). Si el conjunto no
-            // existe en este archivo (sin FIDs), no se indica nada.
-            if (fids.Count > 0)
+            var grupos = new List<(int numAsset, List<FitData> fids)>();
+            for (int numAsset = 1; numAsset <= 4; numAsset++)
             {
-                hoja.Cell($"{columnaValores}1").Value = "Tamaño array necesario";
-                hoja.Cell($"{columnaValores}2").Value = fids.Count;
+                var fids = GenerarFidsLayoutName(datos, numAsset, datosAux);
+                if (fids.Count > 0)
+                    grupos.Add((numAsset, fids));
             }
 
-            int puntero = 4;
-            int punteroCodigo = 4;
-            int indiceArray = 1;
+            var sb = new StringBuilder();
+            sb.Append("DATA_BLOCK \"User_TableInfo_DB\"\r\n");
+            sb.Append("{ S7_Optimized_Access := 'TRUE' }\r\n");
+            sb.Append("VERSION : 0.1\r\n");
+            sb.Append("NON_RETAIN\r\n");
+            sb.Append("//Title_english \r\n");
+            sb.Append("   VAR \r\n");
 
-            foreach (var fid in fids)
+            foreach (var grupo in grupos)
             {
-                // Comilla inicial doble: al copiar/pegar en Excel, la primera comilla se
-                // interpreta como marcador de texto y desaparece, así que hace falta una
-                // segunda para que quede una comilla visible en el resultado pegado.
-                hoja.Cell($"{columnaValores}{puntero}").Value = $"''{fid.LayoutName}'";
-                puntero++;
-                hoja.Cell($"{columnaValores}{puntero}").Value = $"''{fid.Working}'";
-                puntero++;
-                hoja.Cell($"{columnaValores}{puntero}").Value = fid.Fid;
-                puntero++;
-                hoja.Cell($"{columnaValores}{puntero}").Value = Blank.Value;
-                puntero++;
-
-                // Columna de código AWL: una posición del array TableInfo_Lx por cada
-                // conjunto (X = número de asset / conjunto de LayoutName), empezando en 1.
-                string destino = $"\"User_TableInfo_DB\".TableInfo_L{numAsset}[{indiceArray}]";
-
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"//{fid.Asset} - {fid.Fid}";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L {fid.Fid}";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.FeatureID";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L '{fid.Working}'";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.Working";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"L '{fid.LayoutName}'";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = $"T {destino}.Asset";
-                punteroCodigo++;
-                hoja.Cell($"{columnaCodigo}{punteroCodigo}").Value = Blank.Value;
-                punteroCodigo++;
-
-                indiceArray++;
+                sb.Append($"      TableInfo_{grupo.numAsset} {{ S7_SetPoint := 'False'}} : Array[1..{grupo.fids.Count}] of \"TableInfo_UDT\";\r\n");
             }
 
-            hoja.Column(columnaCodigo).Width = 45;
+            sb.Append("   END_VAR\r\n");
+            sb.Append("\r\n\r\n");
+            sb.Append("BEGIN\r\n");
+
+            foreach (var grupo in grupos)
+            {
+                for (int i = 0; i < grupo.fids.Count; i++)
+                {
+                    var fid = grupo.fids[i];
+                    int indice = i + 1;
+                    string featureId = string.IsNullOrWhiteSpace(fid.Fid) ? "0" : fid.Fid.Trim();
+
+                    sb.Append($"   TableInfo_{grupo.numAsset}[{indice}].Asset := '{fid.LayoutName}';\r\n");
+                    sb.Append($"   TableInfo_{grupo.numAsset}[{indice}].Working := '{fid.Working}';\r\n");
+                    sb.Append($"   TableInfo_{grupo.numAsset}[{indice}].FeatureID := {featureId};\r\n");
+                }
+            }
+
+            sb.Append("END_DATA_BLOCK\r\n");
+
+            return sb.ToString();
         }
 
         private void GenerarHojaFIT(XLWorkbook libroSalida, List<FitData> datos, List<FitData> datosAux)
@@ -513,19 +516,8 @@ namespace GeneradorFIT.ViewModels
             rango.CreateTable("FIT");
         }
 
-        private void GenerarCodigoPLC(XLWorkbook libroSalida, int referencias, List<FitData> datos, List<FitData> datosAux)
+        private void GenerarHojaConfigReference(XLWorkbook libroSalida, int referencias, List<FitData> datos)
         {
-            SetEstado("Tablas de datos...");
-            var hojaData = libroSalida.Worksheets.Add("User Data Table Info");
-
-            // Por cada conjunto de LayoutName: una columna de valores y, a continuación,
-            // otra con el código AWL que carga esos valores en "User_TableInfo_DB".
-            // Los datos de "PLC-Aux" (si la hoja existe) se añaden al final de cada lista.
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 1, datosAux), hojaData, "B", "C", 1);
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 2, datosAux), hojaData, "D", "E", 2);
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 3, datosAux), hojaData, "F", "G", 3);
-            RellenarFIDsLayoutName(GenerarFidsLayoutName(datos, 4, datosAux), hojaData, "H", "I", 4);
-
             SetEstado("Configuración PLC...");
             var hojaConfig = libroSalida.Worksheets.Add("Config Reference");
 
