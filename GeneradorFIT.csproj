@@ -18,4 +18,8 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Templates\User_Config_Reference_FB.header.awl" />
+  </ItemGroup>
+
 </Project>
